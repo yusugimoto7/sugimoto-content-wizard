@@ -268,6 +268,7 @@ export default function Home() {
               {COUNTRIES.map((c) => (
                 <button
                   key={c.code}
+                  type="button"
                   className={`${styles.chip} ${wizard.countries.includes(c.code) ? styles.chipSelected : ""}`}
                   onClick={() => toggleCountry(c.code)}
                 >
@@ -283,6 +284,7 @@ export default function Home() {
               {CONTENT_TYPES.map((t) => (
                 <button
                   key={t}
+                  type="button"
                   className={`${styles.chip} ${wizard.contentType === t ? styles.chipSelected : ""}`}
                   onClick={() => setWizard((w) => ({ ...w, contentType: t }))}
                 >
@@ -298,6 +300,7 @@ export default function Home() {
               {AUDIENCES.map((a) => (
                 <button
                   key={a}
+                  type="button"
                   className={`${styles.chip} ${wizard.audience === a ? styles.chipSelected : ""}`}
                   onClick={() => setWizard((w) => ({ ...w, audience: a }))}
                 >

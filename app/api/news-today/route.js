@@ -1,4 +1,15 @@
 export const runtime = "nodejs";
+// Without this, Next.js treats a GET handler with no dynamic APIs as static
+// and bakes the response in at build time — force it dynamic so every
+// request actually runs this handler instead of serving a frozen build-time
+// snapshot.
+export const dynamic = "force-dynamic";
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
 // Mock news items until real RSS ingestion replaces this. Shape matches what
 // lib/prompts.js expects as `topic`/`sourceText` input once a user picks one.
@@ -86,7 +97,21 @@ const MOCK_NEWS = [
 ];
 
 export async function GET() {
-  const canada = MOCK_NEWS.filter((n) => n.country === "canada");
-  const europe = MOCK_NEWS.filter((n) => n.country === "europe");
-  return Response.json({ items: MOCK_NEWS, canada, europe });
+  try {
+    const canada = MOCK_NEWS.filter((n) => n.country === "canada");
+    const europe = MOCK_NEWS.filter((n) => n.country === "europe");
+    return Response.json(
+      { items: MOCK_NEWS, canada, europe },
+      { headers: CORS_HEADERS }
+    );
+  } catch (err) {
+    return Response.json(
+      { error: err.message || "Failed to load news" },
+      { status: 500, headers: CORS_HEADERS }
+    );
+  }
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
 }

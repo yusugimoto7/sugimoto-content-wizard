@@ -210,17 +210,24 @@
 .chipGroup {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
 }
 
 .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: 999px;
-  padding: 9px 16px;
+  padding: 9px 18px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(91, 63, 209, 0.15);
+  user-select: none;
 }
 
 .chipSelected {
