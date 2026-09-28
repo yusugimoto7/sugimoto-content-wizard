@@ -25,7 +25,7 @@ const FORMATS = [
 
 const SLIDE_COUNTS = [5, 7, 10, 12];
 
-const ARCHIVE_KEY = "sugimoto_wizard_archive";
+const ARCHIVE_KEY = "sugimoto_archive";
 
 // localStorage can throw (private mode, quota, disabled) - archive is a
 // convenience, never let it crash the wizard.
@@ -273,10 +273,14 @@ export default function Home() {
     addToArchive({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date: new Date().toISOString(),
-      topicTitle: result.topic?.title || "",
+      title: result.topic?.title || "",
+      country: result.topic?.country || "",
       format: result.format,
+      tone: result.topic?.tone || "",
+      language: result.topic?.language || "persian",
+      content: fullTextFor(result.format, result.output),
+      sources: Array.isArray(result.topic?.researchedFacts) ? result.topic.researchedFacts : [],
       output: result.output,
-      raw: result.raw || "",
     });
     setSaveConfirm(true);
     setTimeout(() => {
@@ -666,7 +670,7 @@ export default function Home() {
                   className={styles.archiveRowMain}
                   onClick={() => setArchiveItem(item)}
                 >
-                  <span className={styles.archiveRowTitle}>{item.topicTitle || "بدون عنوان"}</span>
+                  <span className={styles.archiveRowTitle}>{item.title || "بدون عنوان"}</span>
                   <span className={styles.archiveRowMeta}>
                     {formatDate(item.date)} ·{" "}
                     {FORMATS.find((f) => f.value === item.format)?.label || item.format}
@@ -701,7 +705,7 @@ export default function Home() {
               {FORMATS.find((f) => f.value === archiveItem.format)?.icon}{" "}
               {FORMATS.find((f) => f.value === archiveItem.format)?.label}
             </span>
-            <h2 className={styles.outputTitle}>{archiveItem.topicTitle || "بدون عنوان"}</h2>
+            <h2 className={styles.outputTitle}>{archiveItem.title || "بدون عنوان"}</h2>
             <p className={styles.muted}>{formatDate(archiveItem.date)}</p>
           </div>
 
