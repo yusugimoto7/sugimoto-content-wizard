@@ -25,7 +25,7 @@ const FORMATS = {
 // Merge the picked news items / custom-topic fields into a single `topic`
 // object plus a `sourceText` string, the shared input shape every prompt
 // function in lib/prompts.js expects.
-function buildContext(source, tone) {
+function buildContext(source, tone, language) {
   const items = Array.isArray(source?.items) ? source.items : [];
   const countries = Array.isArray(source?.countries) ? source.countries : [];
 
@@ -41,6 +41,7 @@ function buildContext(source, tone) {
         audience: source.audience || "",
         country: countries.join(", "),
         tone,
+        language,
       },
       sourceText,
     };
@@ -53,6 +54,7 @@ function buildContext(source, tone) {
       audience: source?.audience || "",
       country: countries.join(", "),
       tone,
+      language,
     },
     sourceText: source?.subject || "",
   };
@@ -66,7 +68,7 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { source, tone, format, feedback, previousOutput } = body || {};
+  const { source, tone, format, feedback, previousOutput, language } = body || {};
   const spec = FORMATS[format];
   if (!spec) {
     return Response.json(
@@ -78,7 +80,7 @@ export async function POST(req) {
     return Response.json({ error: "Missing source" }, { status: 400 });
   }
 
-  const { topic, sourceText } = buildContext(source, tone);
+  const { topic, sourceText } = buildContext(source, tone, language);
   let prompt = spec.build(topic, sourceText);
 
   // Edit loop: re-send the full original prompt plus the previous attempt

@@ -88,6 +88,7 @@ function initialState() {
     subject: "",
     tone: "",
     format: "",
+    language: "persian",
     selectedNewsIds: new Set(),
   };
 }
@@ -223,7 +224,12 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, tone: wizard.tone, format: wizard.format }),
+        body: JSON.stringify({
+          source,
+          tone: wizard.tone,
+          format: wizard.format,
+          language: wizard.language,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "تولید محتوا با خطا مواجه شد");
@@ -293,6 +299,7 @@ export default function Home() {
           source,
           tone: wizard.tone,
           format: wizard.format,
+          language: wizard.language,
           feedback: feedbackText,
           previousOutput: result.raw || "",
         }),
@@ -469,6 +476,26 @@ export default function Home() {
           </div>
 
           {genError && <p className={styles.errorBox}>{genError}</p>}
+
+          <div className={styles.formSection}>
+            <div className={styles.sectionLabel}>زبان خروجی</div>
+            <div className={styles.chipGroup}>
+              <button
+                type="button"
+                className={`${styles.chip} ${wizard.language === "persian" ? styles.chipSelected : ""}`}
+                onClick={() => setWizard((w) => ({ ...w, language: "persian" }))}
+              >
+                🇮🇷 فارسی
+              </button>
+              <button
+                type="button"
+                className={`${styles.chip} ${wizard.language === "english" ? styles.chipSelected : ""}`}
+                onClick={() => setWizard((w) => ({ ...w, language: "english" }))}
+              >
+                🇬🇧 English
+              </button>
+            </div>
+          </div>
 
           <div className={styles.formSection}>
             <div className={styles.sectionLabel}>لحن محتوا</div>
