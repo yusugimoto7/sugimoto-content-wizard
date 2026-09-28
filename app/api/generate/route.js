@@ -87,8 +87,12 @@ export async function POST(req) {
   // and the user's feedback, so the model revises instead of starting cold.
   // The reminder to keep the same delimiter format is required, not
   // decorative — the response is parsed with spec.parse() below either way.
+  // FIX: strip the previous raw response's own "===NAME===" delimiters
+  // before embedding it here - otherwise the model sees them mid-prompt and
+  // sometimes echoes one back into the new output.
   if (feedback && String(feedback).trim()) {
-    prompt += `\n\nمحتوای قبلی:\n${previousOutput || ""}\n\nبازخورد کاربر: ${feedback}\n\nلطفاً براساس بازخورد بهبود بده. خروجی جدید را دقیقاً با همان دلیمیترهای فرمت بالا بده.`;
+    const cleanPrevious = String(previousOutput || "").replace(/={3,}\s*[A-Z][A-Z_ ]*(?:\s+\d+)?\s*={3,}/g, "").trim();
+    prompt += `\n\nمحتوای قبلی:\n${cleanPrevious}\n\nبازخورد کاربر: ${feedback}\n\nلطفاً براساس بازخورد بهبود بده. خروجی جدید را دقیقاً با همان دلیمیترهای فرمت بالا بده.`;
   }
 
   let raw;
