@@ -69,7 +69,7 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { source, tone, format, feedback, previousOutput, language } = body || {};
+  const { source, tone, format, feedback, previousOutput, language, slideCount } = body || {};
   const spec = FORMATS[format];
   if (!spec) {
     return Response.json(
@@ -82,6 +82,7 @@ export async function POST(req) {
   }
 
   const { topic, sourceText } = buildContext(source, tone, language);
+  if (slideCount) topic.slideCount = slideCount;
 
   // Ground the generation in a real web search before writing anything.
   // Research failing (bad key, no results, network) must never block

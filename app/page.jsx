@@ -23,6 +23,8 @@ const FORMATS = [
   { value: "telegram", icon: "✈️", label: "پست تلگرام" },
 ];
 
+const SLIDE_COUNTS = [5, 7, 10, 12];
+
 const ARCHIVE_KEY = "sugimoto_wizard_archive";
 
 // localStorage can throw (private mode, quota, disabled) - archive is a
@@ -89,6 +91,7 @@ function initialState() {
     tone: "",
     format: "",
     language: "persian",
+    slideCount: 7,
     selectedNewsIds: new Set(),
   };
 }
@@ -229,6 +232,7 @@ export default function Home() {
           tone: wizard.tone,
           format: wizard.format,
           language: wizard.language,
+          slideCount: wizard.slideCount,
         }),
       });
       const data = await res.json();
@@ -300,6 +304,7 @@ export default function Home() {
           tone: wizard.tone,
           format: wizard.format,
           language: wizard.language,
+          slideCount: wizard.slideCount,
           feedback: feedbackText,
           previousOutput: result.raw || "",
         }),
@@ -527,6 +532,24 @@ export default function Home() {
               ))}
             </div>
           </div>
+
+          {wizard.format === "carousel" && (
+            <div className={styles.formSection}>
+              <div className={styles.sectionLabel}>تعداد اسلاید</div>
+              <div className={styles.chipGroup}>
+                {SLIDE_COUNTS.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`${styles.chip} ${wizard.slideCount === n ? styles.chipSelected : ""}`}
+                    onClick={() => setWizard((w) => ({ ...w, slideCount: n }))}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className={styles.footerBar}>
             <button
