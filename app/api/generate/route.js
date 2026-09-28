@@ -11,6 +11,8 @@ import {
   parseReel,
   parseArticle,
   parseTelegramPost,
+  summaryPrompt,
+  parseSummaries,
 } from "@/lib/prompts";
 
 export const runtime = "nodejs";
@@ -48,16 +50,20 @@ function buildContext(source, tone, language) {
     };
   }
 
+  // `context` is an optional additional block (e.g. the chosen angle summary
+  // from Path B step 3) appended to the main subject as source text.
+  const baseText = source?.subject || "";
+  const contextText = source?.context ? "\n\n" + source.context : "";
   return {
     topic: {
       title: source?.subject || "",
       field: source?.contentType || "",
-      audience: source?.audience || "",
+      audience: source?.audience || "عمومی",
       country: countries.join(", "),
       tone,
       language,
     },
-    sourceText: source?.subject || "",
+    sourceText: baseText + contextText,
   };
 }
 
@@ -69,16 +75,32 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { source, tone, format, feedback, language, slideCount } = body || {};
+  const { source, tone, format, feedback, language, slideCount, mode } = body || {};
+
+  if (!source || typeof source !== "object") {
+    return Response.json({ error: "Missing source" }, { status: 400 });
+  }
+
+  // Summary mode: generate two angle summaries for the user to choose from
+  // (Path B step 3). Skips the full research step to keep it fast.
+  if (mode === "summary") {
+    const { topic, sourceText } = buildContext(source, tone, language);
+    const prompt = summaryPrompt(topic, sourceText);
+    let raw;
+    try {
+      raw = await generateText(prompt, 1500);
+    } catch (err) {
+      return Response.json({ error: err.message || "Summary generation failed" }, { status: 500 });
+    }
+    return Response.json({ summaries: parseSummaries(raw) });
+  }
+
   const spec = FORMATS[format];
   if (!spec) {
     return Response.json(
       { error: `Unknown format "${format}". Expected one of: ${Object.keys(FORMATS).join(", ")}` },
       { status: 400 }
     );
-  }
-  if (!source || typeof source !== "object") {
-    return Response.json({ error: "Missing source" }, { status: 400 });
   }
 
   const { topic, sourceText } = buildContext(source, tone, language);

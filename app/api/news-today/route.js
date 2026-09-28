@@ -1,9 +1,12 @@
 export const runtime = "nodejs";
-// Without this, Next.js treats a GET handler with no dynamic APIs as static
-// and bakes the response in at build time — force it dynamic so every
-// request actually runs this handler instead of serving a frozen build-time
-// snapshot.
 export const dynamic = "force-dynamic";
+
+// 24-hour in-memory cache. On Render the server process stays alive between
+// requests, so this avoids hammering any upstream source on every page load.
+// It resets on deploy, which is fine - fresh deploy = fresh news.
+let newsCache = null;
+let cacheBornAt = 0;
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -98,12 +101,14 @@ const MOCK_NEWS = [
 
 export async function GET() {
   try {
+    if (newsCache && Date.now() - cacheBornAt < CACHE_TTL_MS) {
+      return Response.json(newsCache, { headers: CORS_HEADERS });
+    }
     const canada = MOCK_NEWS.filter((n) => n.country === "canada");
     const europe = MOCK_NEWS.filter((n) => n.country === "europe");
-    return Response.json(
-      { items: MOCK_NEWS, canada, europe },
-      { headers: CORS_HEADERS }
-    );
+    newsCache = { items: MOCK_NEWS, canada, europe };
+    cacheBornAt = Date.now();
+    return Response.json(newsCache, { headers: CORS_HEADERS });
   } catch (err) {
     return Response.json(
       { error: err.message || "Failed to load news" },
