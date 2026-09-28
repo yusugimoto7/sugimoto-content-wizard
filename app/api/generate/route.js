@@ -1,4 +1,5 @@
 import { generateText } from "@/lib/anthropic";
+import { researchTopic } from "@/lib/research";
 import {
   carouselPrompt,
   infographicPrompt,
@@ -81,6 +82,17 @@ export async function POST(req) {
   }
 
   const { topic, sourceText } = buildContext(source, tone, language);
+
+  // Ground the generation in a real web search before writing anything.
+  // Research failing (bad key, no results, network) must never block
+  // generation - it just falls back to sourceText/brand rules alone.
+  try {
+    topic.researchedFacts = await researchTopic(topic);
+  } catch (err) {
+    console.error("researchTopic failed:", err);
+    topic.researchedFacts = [];
+  }
+
   let prompt = spec.build(topic, sourceText);
 
   // Edit loop: re-send the full original prompt plus the previous attempt
