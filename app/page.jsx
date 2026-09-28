@@ -306,7 +306,6 @@ export default function Home() {
           language: wizard.language,
           slideCount: wizard.slideCount,
           feedback: feedbackText,
-          previousOutput: result.raw || "",
         }),
       });
       const data = await res.json();
@@ -603,17 +602,17 @@ export default function Home() {
           {!editMode && (
             <div className={styles.actionStack}>
               <button className={styles.primaryBtn} onClick={handleApprove}>
-                {saveConfirm ? "ذخیره شد ✅" : "تأیید و ذخیره"}
+                {saveConfirm ? "ذخیره شد ✅" : "✅ تأیید و ذخیره"}
               </button>
               <button className={styles.secondaryBtn} onClick={() => setEditMode(true)}>
-                ویرایش کن
+                ✏️ ویرایش و بازتولید
               </button>
             </div>
           )}
 
           {editMode && (
             <div className={styles.formSection}>
-              <div className={styles.sectionLabel}>چی رو تغییر بدیم؟</div>
+              <div className={styles.sectionLabel}>چه چیزی باید اصلاح بشه؟</div>
               <textarea
                 className={styles.textarea}
                 rows={4}

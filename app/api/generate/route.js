@@ -69,7 +69,7 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { source, tone, format, feedback, previousOutput, language, slideCount } = body || {};
+  const { source, tone, format, feedback, language, slideCount } = body || {};
   const spec = FORMATS[format];
   if (!spec) {
     return Response.json(
@@ -94,19 +94,15 @@ export async function POST(req) {
     topic.researchedFacts = [];
   }
 
-  let prompt = spec.build(topic, sourceText);
-
-  // Edit loop: re-send the full original prompt plus the previous attempt
-  // and the user's feedback, so the model revises instead of starting cold.
-  // The reminder to keep the same delimiter format is required, not
-  // decorative — the response is parsed with spec.parse() below either way.
-  // FIX: strip the previous raw response's own "===NAME===" delimiters
-  // before embedding it here - otherwise the model sees them mid-prompt and
-  // sometimes echoes one back into the new output.
+  // Approve/edit loop: feedbackBlock(topic.feedback) in lib/prompts.js folds
+  // this into the prompt itself, so the model revises from the same source
+  // + feedback rather than re-sending the previous raw output (which had
+  // its own delimiters and could otherwise leak into the new response).
   if (feedback && String(feedback).trim()) {
-    const cleanPrevious = String(previousOutput || "").replace(/={3,}\s*[A-Z][A-Z_ ]*(?:\s+\d+)?\s*={3,}/g, "").trim();
-    prompt += `\n\nمحتوای قبلی:\n${cleanPrevious}\n\nبازخورد کاربر: ${feedback}\n\nلطفاً براساس بازخورد بهبود بده. خروجی جدید را دقیقاً با همان دلیمیترهای فرمت بالا بده.`;
+    topic.feedback = feedback;
   }
+
+  const prompt = spec.build(topic, sourceText);
 
   let raw;
   try {
