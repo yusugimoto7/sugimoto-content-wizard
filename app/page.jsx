@@ -13,7 +13,6 @@ const COUNTRIES = [
 ];
 
 const CONTENT_TYPES = ["آموزشی", "خبری", "مقایسه‌ای", "راهنمای گام‌به‌گام", "تحلیلی"];
-const AUDIENCES = ["دانشجو", "خانواده", "کارآفرین", "متخصص", "عمومی"];
 const TONES = ["آموزشی و رسمی", "صمیمی و ساده", "فوری و خبری", "تحلیلی و عمیق", "انگیزشی"];
 const FORMATS = [
   { value: "carousel", icon: "🎠", label: "کاروسل اینستاگرام" },
@@ -24,11 +23,8 @@ const FORMATS = [
 ];
 
 const SLIDE_COUNTS = [5, 7, 10, 12];
-
 const ARCHIVE_KEY = "sugimoto_archive";
 
-// localStorage can throw (private mode, quota, disabled) - archive is a
-// convenience, never let it crash the wizard.
 function loadArchive() {
   try {
     const raw = localStorage.getItem(ARCHIVE_KEY);
@@ -42,9 +38,7 @@ function loadArchive() {
 function saveArchive(list) {
   try {
     localStorage.setItem(ARCHIVE_KEY, JSON.stringify(list));
-  } catch {
-    // ignore - nothing we can do if storage is unavailable
-  }
+  } catch {}
 }
 
 function formatDate(iso) {
@@ -55,8 +49,6 @@ function formatDate(iso) {
   }
 }
 
-// Shared with the archive detail view - {format, output} -> one copy-able
-// plain-text block, same shape buildFullText() used to build inline.
 function fullTextFor(format, output) {
   if (!output) return "";
   if (format === "carousel") {
@@ -72,12 +64,8 @@ function fullTextFor(format, output) {
   if (format === "reel") {
     return `هوک:\n${output.hook}\n\nبدنه:\n${output.body}\n\nCTA:\n${output.cta}\n\nمتن‌های روی صفحه:\n${output.onscreen.join("\n")}`;
   }
-  if (format === "article") {
-    return `${output.title}\n\n${output.content}`;
-  }
-  if (format === "telegram") {
-    return output.text;
-  }
+  if (format === "article") return `${output.title}\n\n${output.content}`;
+  if (format === "telegram") return output.text;
   return "";
 }
 
@@ -86,9 +74,8 @@ function initialState() {
     pathType: null,
     countries: [],
     contentType: "",
-    audience: "",
-    subject: "",
     tone: "",
+    subject: "",
     format: "",
     language: "persian",
     slideCount: 7,
@@ -100,19 +87,35 @@ export default function Home() {
   const [view, setView] = useState("home");
   const [wizard, setWizard] = useState(initialState);
 
+  // Path A - news
   const [newsData, setNewsData] = useState({ canada: [], europe: [] });
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState("");
+  const [expandedNewsId, setExpandedNewsId] = useState(null);
 
+  // Path B step 2 - topic suggestions
+  const [suggestedTopics, setSuggestedTopics] = useState([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState("");
+
+  // Path B step 3 - angle summaries
+  const [selectedTopic, setSelectedTopic] = useState(null);
+  const [topicSummaries, setTopicSummaries] = useState([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [chosenSummaryIdx, setChosenSummaryIdx] = useState(null);
+
+  // Generation
   const [genError, setGenError] = useState("");
   const [result, setResult] = useState(null);
   const [reelTab, setReelTab] = useState("hook");
   const [copiedKey, setCopiedKey] = useState("");
 
+  // Edit loop
   const [editMode, setEditMode] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [saveConfirm, setSaveConfirm] = useState(false);
 
+  // Archive
   const [archive, setArchive] = useState([]);
   const [archiveItem, setArchiveItem] = useState(null);
 
@@ -134,6 +137,12 @@ export default function Home() {
     setEditMode(false);
     setFeedbackText("");
     setSaveConfirm(false);
+    setSuggestedTopics([]);
+    setSuggestError("");
+    setSelectedTopic(null);
+    setTopicSummaries([]);
+    setChosenSummaryIdx(null);
+    setExpandedNewsId(null);
     setView("home");
   }
 
@@ -161,7 +170,7 @@ export default function Home() {
 
   function goPathB() {
     setWizard((w) => ({ ...w, pathType: "custom" }));
-    setView("path-b");
+    setView("path-b-step1");
   }
 
   function toggleNews(id) {
@@ -185,14 +194,71 @@ export default function Home() {
 
   const allNews = [...newsData.canada, ...newsData.europe];
   const selectedNewsCount = wizard.selectedNewsIds.size;
-  const pathBReady =
-    wizard.countries.length > 0 &&
-    wizard.contentType &&
-    wizard.audience &&
-    wizard.subject.trim().length > 0;
 
-  // Shared by the first generation and every regenerate-with-feedback call -
-  // both must send the exact same `source` for a given wizard selection.
+  const pathBStep1Ready =
+    wizard.countries.length > 0 && wizard.contentType && wizard.tone;
+
+  // Calls /api/suggest-topics then goes to step 2
+  async function handleSuggestTopics() {
+    setSuggestLoading(true);
+    setSuggestError("");
+    setSuggestedTopics([]);
+    setView("path-b-step2");
+    try {
+      const res = await fetch("/api/suggest-topics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          countries: wizard.countries,
+          category: wizard.contentType,
+          tone: wizard.tone,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "خطا در دریافت پیشنهادات");
+      setSuggestedTopics(data.topics || []);
+    } catch (err) {
+      setSuggestError(err.message || "خطا در دریافت پیشنهادات");
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
+  // User picks a topic → fetch 2 angle summaries (mode=summary)
+  async function handleSelectTopic(topic) {
+    setSelectedTopic(topic);
+    setWizard((w) => ({ ...w, subject: topic.title }));
+    setSummaryLoading(true);
+    setTopicSummaries([]);
+    setChosenSummaryIdx(null);
+    setView("path-b-step3");
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "summary",
+          source: {
+            type: "custom",
+            countries: wizard.countries,
+            contentType: wizard.contentType,
+            audience: "عمومی",
+            subject: topic.title,
+          },
+          tone: wizard.tone,
+          language: wizard.language,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "خطا در تولید خلاصه");
+      setTopicSummaries(data.summaries || []);
+    } catch (err) {
+      setSuggestError(err.message || "خطا در تولید خلاصه");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
   function buildSourcePayload() {
     if (wizard.pathType === "news") {
       const items = allNews
@@ -207,22 +273,26 @@ export default function Home() {
       ];
       return { type: "news", items, countries, contentType: "", audience: "" };
     }
+    // Path B: include chosen angle summary as additional context for final generation
+    const context =
+      topicSummaries.length > 0 && chosenSummaryIdx !== null
+        ? topicSummaries[chosenSummaryIdx]
+        : undefined;
     return {
       type: "custom",
       items: [],
       countries: wizard.countries,
       contentType: wizard.contentType,
-      audience: wizard.audience,
+      audience: "عمومی",
       subject: wizard.subject,
+      ...(context ? { context } : {}),
     };
   }
 
   async function handleGenerate() {
     setGenError("");
     setView("generating");
-
     const source = buildSourcePayload();
-
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -242,7 +312,7 @@ export default function Home() {
       setView("output");
     } catch (err) {
       setGenError(err.message || "تولید محتوا با خطا مواجه شد");
-      setView("tone-format");
+      setView("step-format");
     }
   }
 
@@ -289,15 +359,10 @@ export default function Home() {
     }, 700);
   }
 
-  // Re-sends the same generation request plus the previous raw output and
-  // the user's feedback; app/api/generate/route.js folds those into the
-  // prompt and asks the model to revise. Loops: the result replaces
-  // `result` and the same approve/edit buttons show again.
   async function handleRegenerate() {
     if (!feedbackText.trim() || !result) return;
     setGenError("");
     setView("generating");
-
     const source = buildSourcePayload();
     try {
       const res = await fetch("/api/generate", {
@@ -326,6 +391,12 @@ export default function Home() {
     }
   }
 
+  // What "back" goes to from the step-format view (shared by both paths)
+  function formatStepBack() {
+    if (wizard.pathType === "news") return "path-a";
+    return "path-b-step3";
+  }
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
@@ -333,6 +404,7 @@ export default function Home() {
         <div className={styles.headerSubtitle}>سوگیموتو ویزا</div>
       </header>
 
+      {/* ─── Home ─── */}
       {view === "home" && (
         <div className={styles.homeGrid}>
           <button className={styles.card} onClick={goPathA}>
@@ -343,22 +415,21 @@ export default function Home() {
           <button className={styles.card} onClick={goPathB}>
             <span className={styles.cardIcon}>✏️</span>
             <span className={styles.cardTitle}>موضوع دلخواه</span>
-            <span className={styles.cardDesc}>موضوع خودت را تعریف کن</span>
+            <span className={styles.cardDesc}>موضوع خودت را از میان پیشنهادات هوش مصنوعی انتخاب کن</span>
           </button>
           <button className={styles.card} onClick={() => setView("archive")}>
             <span className={styles.cardIcon}>📁</span>
-            <span className={styles.cardTitle}>آرشیو محتوا</span>
+            <span className={styles.cardTitle}>آرشیو</span>
             <span className={styles.cardDesc}>محتوای ذخیره‌شده را ببین، کپی یا حذف کن</span>
           </button>
         </div>
       )}
 
+      {/* ─── Path A: News list ─── */}
       {view === "path-a" && (
         <div className={styles.section}>
           <div className={styles.topBar}>
-            <button className={styles.backBtn} onClick={resetAll}>
-              → بازگشت
-            </button>
+            <button className={styles.backBtn} onClick={resetAll}>→ بازگشت</button>
           </div>
 
           {newsLoading && <p className={styles.muted}>در حال دریافت اخبار...</p>}
@@ -370,13 +441,17 @@ export default function Home() {
                 title="🇨🇦 کانادا"
                 items={newsData.canada}
                 selected={wizard.selectedNewsIds}
+                expandedId={expandedNewsId}
                 onToggle={toggleNews}
+                onExpand={(id) => setExpandedNewsId(expandedNewsId === id ? null : id)}
               />
               <NewsGroup
                 title="🇪🇺 اروپا"
                 items={newsData.europe}
                 selected={wizard.selectedNewsIds}
+                expandedId={expandedNewsId}
                 onToggle={toggleNews}
+                onExpand={(id) => setExpandedNewsId(expandedNewsId === id ? null : id)}
               />
             </>
           )}
@@ -385,7 +460,7 @@ export default function Home() {
             <button
               className={styles.primaryBtn}
               disabled={selectedNewsCount < 1}
-              onClick={() => setView("tone-format")}
+              onClick={() => setView("step-format")}
             >
               ادامه ({selectedNewsCount})
             </button>
@@ -393,16 +468,15 @@ export default function Home() {
         </div>
       )}
 
-      {view === "path-b" && (
+      {/* ─── Path B Step 1: Country + Category + Tone ─── */}
+      {view === "path-b-step1" && (
         <div className={styles.section}>
           <div className={styles.topBar}>
-            <button className={styles.backBtn} onClick={resetAll}>
-              → بازگشت
-            </button>
+            <button className={styles.backBtn} onClick={resetAll}>→ بازگشت</button>
           </div>
 
           <div className={styles.formSection}>
-            <div className={styles.sectionLabel}>۱. کشورها را انتخاب کن</div>
+            <div className={styles.sectionLabel}>۱. کشور مقصد را انتخاب کن</div>
             <div className={styles.chipGroup}>
               {COUNTRIES.map((c) => (
                 <button
@@ -434,37 +508,117 @@ export default function Home() {
           </div>
 
           <div className={styles.formSection}>
-            <div className={styles.sectionLabel}>۳. مخاطب هدف</div>
+            <div className={styles.sectionLabel}>۳. لحن محتوا</div>
             <div className={styles.chipGroup}>
-              {AUDIENCES.map((a) => (
+              {TONES.map((t) => (
                 <button
-                  key={a}
+                  key={t}
                   type="button"
-                  className={`${styles.chip} ${wizard.audience === a ? styles.chipSelected : ""}`}
-                  onClick={() => setWizard((w) => ({ ...w, audience: a }))}
+                  className={`${styles.chip} ${wizard.tone === t ? styles.chipSelected : ""}`}
+                  onClick={() => setWizard((w) => ({ ...w, tone: t }))}
                 >
-                  {a}
+                  {t}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className={styles.formSection}>
-            <div className={styles.sectionLabel}>۴. موضوع</div>
-            <textarea
-              className={styles.textarea}
-              rows={4}
-              placeholder="خلاصه موضوع را بنویسید..."
-              value={wizard.subject}
-              onChange={(e) => setWizard((w) => ({ ...w, subject: e.target.value }))}
-            />
+          <div className={styles.footerBar}>
+            <button
+              className={styles.primaryBtn}
+              disabled={!pathBStep1Ready}
+              onClick={handleSuggestTopics}
+            >
+              جستجوی موضوعات ترند
+            </button>
           </div>
+        </div>
+      )}
+
+      {/* ─── Path B Step 2: Topic suggestions ─── */}
+      {view === "path-b-step2" && (
+        <div className={styles.section}>
+          <div className={styles.topBar}>
+            <button className={styles.backBtn} onClick={() => setView("path-b-step1")}>→ بازگشت</button>
+          </div>
+
+          {suggestLoading && (
+            <div className={styles.generatingWrap}>
+              <div className={styles.spinner} />
+              <p className={styles.generatingText}>در حال جستجوی موضوعات ترند...</p>
+            </div>
+          )}
+          {suggestError && <p className={styles.errorBox}>{suggestError}</p>}
+
+          {!suggestLoading && suggestedTopics.length === 0 && !suggestError && (
+            <p className={styles.muted}>موضوعی یافت نشد. دوباره تلاش کن.</p>
+          )}
+
+          {!suggestLoading && suggestedTopics.length > 0 && (
+            <>
+              <div className={styles.sectionLabel}>یک موضوع را انتخاب کن:</div>
+              <div className={styles.topicList}>
+                {suggestedTopics.map((topic, i) => (
+                  <button
+                    key={i}
+                    className={styles.topicCard}
+                    onClick={() => handleSelectTopic(topic)}
+                  >
+                    <span className={styles.topicCardTitle}>{topic.title}</span>
+                    {topic.why_trending && (
+                      <span className={styles.topicCardWhy}>{topic.why_trending}</span>
+                    )}
+                    {topic.country && (
+                      <span className={styles.topicCardCountry}>{topic.country}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ─── Path B Step 3: Choose angle summary ─── */}
+      {view === "path-b-step3" && (
+        <div className={styles.section}>
+          <div className={styles.topBar}>
+            <button className={styles.backBtn} onClick={() => setView("path-b-step2")}>→ بازگشت</button>
+          </div>
+
+          {selectedTopic && (
+            <div className={styles.selectedTopicLabel}>{selectedTopic.title}</div>
+          )}
+
+          {summaryLoading && (
+            <div className={styles.generatingWrap}>
+              <div className={styles.spinner} />
+              <p className={styles.generatingText}>در حال تولید زاویه‌های محتوا...</p>
+            </div>
+          )}
+          {suggestError && <p className={styles.errorBox}>{suggestError}</p>}
+
+          {!summaryLoading && topicSummaries.length > 0 && (
+            <>
+              <div className={styles.sectionLabel}>یک زاویه را انتخاب کن:</div>
+              {topicSummaries.map((summary, i) => (
+                <button
+                  key={i}
+                  className={`${styles.summaryCard} ${chosenSummaryIdx === i ? styles.summaryCardSelected : ""}`}
+                  onClick={() => setChosenSummaryIdx(i)}
+                >
+                  <span className={styles.summaryCardNum}>زاویه {i + 1}</span>
+                  <span className={styles.summaryCardText}>{summary}</span>
+                </button>
+              ))}
+            </>
+          )}
 
           <div className={styles.footerBar}>
             <button
               className={styles.primaryBtn}
-              disabled={!pathBReady}
-              onClick={() => setView("tone-format")}
+              disabled={chosenSummaryIdx === null}
+              onClick={() => setView("step-format")}
             >
               ادامه
             </button>
@@ -472,13 +626,11 @@ export default function Home() {
         </div>
       )}
 
-      {view === "tone-format" && (
+      {/* ─── Shared Step 4: Format + Slides + Language (+ Tone for news path) ─── */}
+      {view === "step-format" && (
         <div className={styles.section}>
           <div className={styles.topBar}>
-            <button
-              className={styles.backBtn}
-              onClick={() => setView(wizard.pathType === "news" ? "path-a" : "path-b")}
-            >
+            <button className={styles.backBtn} onClick={() => setView(formatStepBack())}>
               → بازگشت
             </button>
           </div>
@@ -505,20 +657,23 @@ export default function Home() {
             </div>
           </div>
 
-          <div className={styles.formSection}>
-            <div className={styles.sectionLabel}>لحن محتوا</div>
-            <div className={styles.chipGroup}>
-              {TONES.map((t) => (
-                <button
-                  key={t}
-                  className={`${styles.chip} ${wizard.tone === t ? styles.chipSelected : ""}`}
-                  onClick={() => setWizard((w) => ({ ...w, tone: t }))}
-                >
-                  {t}
-                </button>
-              ))}
+          {/* Tone only shown for news path (path B already picked tone in step 1) */}
+          {wizard.pathType === "news" && (
+            <div className={styles.formSection}>
+              <div className={styles.sectionLabel}>لحن محتوا</div>
+              <div className={styles.chipGroup}>
+                {TONES.map((t) => (
+                  <button
+                    key={t}
+                    className={`${styles.chip} ${wizard.tone === t ? styles.chipSelected : ""}`}
+                    onClick={() => setWizard((w) => ({ ...w, tone: t }))}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className={styles.formSection}>
             <div className={styles.sectionLabel}>فرمت خروجی</div>
@@ -557,7 +712,10 @@ export default function Home() {
           <div className={styles.footerBar}>
             <button
               className={styles.primaryBtn}
-              disabled={!wizard.tone || !wizard.format}
+              disabled={
+                !wizard.format ||
+                (wizard.pathType === "news" && !wizard.tone)
+              }
               onClick={handleGenerate}
             >
               تولید محتوا
@@ -566,6 +724,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* ─── Generating ─── */}
       {view === "generating" && (
         <div className={styles.generatingWrap}>
           <div className={styles.spinner} />
@@ -573,6 +732,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* ─── Output ─── */}
       {view === "output" && result && (
         <div className={styles.section}>
           <div className={styles.outputHeader}>
@@ -634,10 +794,7 @@ export default function Home() {
                 </button>
                 <button
                   className={styles.secondaryBtn}
-                  onClick={() => {
-                    setEditMode(false);
-                    setFeedbackText("");
-                  }}
+                  onClick={() => { setEditMode(false); setFeedbackText(""); }}
                 >
                   انصراف
                 </button>
@@ -653,14 +810,13 @@ export default function Home() {
         </div>
       )}
 
+      {/* ─── Archive list ─── */}
       {view === "archive" && !archiveItem && (
         <div className={styles.section}>
           <div className={styles.topBar}>
-            <button className={styles.backBtn} onClick={() => setView("home")}>
-              → بازگشت
-            </button>
+            <button className={styles.backBtn} onClick={() => setView("home")}>→ بازگشت</button>
           </div>
-          <h2 className={styles.outputTitle}>آرشیو محتوا</h2>
+          <h2 className={styles.outputTitle}>آرشیو</h2>
           {archive.length === 0 && <p className={styles.muted}>هنوز محتوایی ذخیره نشده.</p>}
           <div className={styles.archiveList}>
             {archive.map((item) => (
@@ -692,12 +848,11 @@ export default function Home() {
         </div>
       )}
 
+      {/* ─── Archive detail ─── */}
       {view === "archive" && archiveItem && (
         <div className={styles.section}>
           <div className={styles.topBar}>
-            <button className={styles.backBtn} onClick={() => setArchiveItem(null)}>
-              → بازگشت به آرشیو
-            </button>
+            <button className={styles.backBtn} onClick={() => setArchiveItem(null)}>→ بازگشت به آرشیو</button>
           </div>
 
           <div className={styles.outputHeader}>
@@ -712,20 +867,26 @@ export default function Home() {
           <div className={styles.outputActions}>
             <button
               className={styles.copyAllBtn}
-              onClick={() => copy("all", fullTextFor(archiveItem.format, archiveItem.output))}
+              onClick={() => copy("all", archiveItem.content || fullTextFor(archiveItem.format, archiveItem.output))}
             >
               {copiedKey === "all" ? "کپی شد ✅" : "کپی همه"}
             </button>
           </div>
 
-          <OutputContent
-            format={archiveItem.format}
-            output={archiveItem.output}
-            copiedKey={copiedKey}
-            onCopy={copy}
-            reelTab={reelTab}
-            setReelTab={setReelTab}
-          />
+          {archiveItem.output ? (
+            <OutputContent
+              format={archiveItem.format}
+              output={archiveItem.output}
+              copiedKey={copiedKey}
+              onCopy={copy}
+              reelTab={reelTab}
+              setReelTab={setReelTab}
+            />
+          ) : (
+            <div className={styles.card2}>
+              <p className={styles.cardBody}>{archiveItem.content}</p>
+            </div>
+          )}
 
           <div className={styles.footerBar}>
             <button
@@ -743,8 +904,7 @@ export default function Home() {
   );
 }
 
-// Shared by the live output view and the archive detail view - renders the
-// format-specific content blocks for a given {format, output}.
+// Shared renderer for both live output and archive detail
 function OutputContent({ format, output, copiedKey, onCopy, reelTab, setReelTab }) {
   return (
     <>
@@ -826,30 +986,43 @@ function OutputContent({ format, output, copiedKey, onCopy, reelTab, setReelTab 
   );
 }
 
-function NewsGroup({ title, items, selected, onToggle }) {
+function NewsGroup({ title, items, selected, expandedId, onToggle, onExpand }) {
   if (!items.length) return null;
   return (
     <div className={styles.newsGroup}>
       <div className={styles.groupTitle}>{title}</div>
       <div className={styles.newsList}>
         {items.map((item) => (
-          <label
+          <div
             key={item.id}
             className={`${styles.newsItem} ${selected.has(item.id) ? styles.newsItemSelected : ""}`}
           >
-            <input
-              type="checkbox"
-              className={styles.newsCheckbox}
-              checked={selected.has(item.id)}
-              onChange={() => onToggle(item.id)}
-            />
-            <span>
-              <span className={styles.newsItemTitle}>{item.title}</span>
-              <span className={styles.newsItemMeta}>
-                {item.source} · {item.date}
-              </span>
-            </span>
-          </label>
+            <div className={styles.newsItemRow}>
+              <input
+                type="checkbox"
+                className={styles.newsCheckbox}
+                checked={selected.has(item.id)}
+                onChange={() => onToggle(item.id)}
+              />
+              <button
+                type="button"
+                className={styles.newsItemMain}
+                onClick={() => onExpand(item.id)}
+              >
+                <span className={styles.newsItemTitle}>{item.title}</span>
+                <span className={styles.newsItemMeta}>
+                  {item.source} · {item.date} · {expandedId === item.id ? "▲" : "▼"}
+                </span>
+              </button>
+            </div>
+            {expandedId === item.id && (
+              <div className={styles.newsExpanded}>
+                {item.snippet && <p className={styles.newsSnippet}>{item.snippet}</p>}
+                {item.date && <p className={styles.newsExpandedMeta}>تاریخ: {item.date}</p>}
+                {item.source && <p className={styles.newsExpandedMeta}>منبع: {item.source}</p>}
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>

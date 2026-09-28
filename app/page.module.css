@@ -474,3 +474,147 @@
   font-size: 16px;
   min-width: 44px;
 }
+
+/* Path B Step 2 — topic suggestion cards */
+
+.topicList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topicCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: right;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.topicCard:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.topicCardTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.topicCardWhy {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.topicCardCountry {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-top: 2px;
+}
+
+/* Path B Step 3 — angle summary cards */
+
+.selectedTopicLabel {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: right;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.summaryCard:hover {
+  border-color: var(--accent);
+}
+
+.summaryCardSelected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.summaryCardNum {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.summaryCardSelected .summaryCardNum {
+  background: var(--accent);
+  color: #fff;
+}
+
+.summaryCardText {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* Path A — expandable news items */
+
+.newsItemRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.newsItemMain {
+  flex: 1;
+  background: none;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: right;
+  padding: 0;
+}
+
+.newsExpanded {
+  padding: 0 14px 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.newsSnippet {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  margin-top: 8px;
+}
+
+.newsExpandedMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
