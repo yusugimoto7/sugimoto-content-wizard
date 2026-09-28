@@ -23,6 +23,62 @@ const FORMATS = [
   { value: "telegram", icon: "✈️", label: "پست تلگرام" },
 ];
 
+const ARCHIVE_KEY = "sugimoto_wizard_archive";
+
+// localStorage can throw (private mode, quota, disabled) - archive is a
+// convenience, never let it crash the wizard.
+function loadArchive() {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveArchive(list) {
+  try {
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(list));
+  } catch {
+    // ignore - nothing we can do if storage is unavailable
+  }
+}
+
+function formatDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString("fa-IR");
+  } catch {
+    return iso || "";
+  }
+}
+
+// Shared with the archive detail view - {format, output} -> one copy-able
+// plain-text block, same shape buildFullText() used to build inline.
+function fullTextFor(format, output) {
+  if (!output) return "";
+  if (format === "carousel") {
+    return (
+      output.slides.map((s) => `اسلاید ${s.num}:\n${s.content}`).join("\n\n") +
+      "\n\n--- کپشن ---\n" +
+      output.caption
+    );
+  }
+  if (format === "infographic") {
+    return `${output.title}\n\nآمار کلیدی:\n${output.stats.join("\n")}\n\nمقایسه:\n${output.comparison}\n\nنقشه راه:\n${output.roadmap}\n\nمنبع: ${output.source}`;
+  }
+  if (format === "reel") {
+    return `هوک:\n${output.hook}\n\nبدنه:\n${output.body}\n\nCTA:\n${output.cta}\n\nمتن‌های روی صفحه:\n${output.onscreen.join("\n")}`;
+  }
+  if (format === "article") {
+    return `${output.title}\n\n${output.content}`;
+  }
+  if (format === "telegram") {
+    return output.text;
+  }
+  return "";
+}
+
 function initialState() {
   return {
     pathType: null,
@@ -49,6 +105,13 @@ export default function Home() {
   const [reelTab, setReelTab] = useState("hook");
   const [copiedKey, setCopiedKey] = useState("");
 
+  const [editMode, setEditMode] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [saveConfirm, setSaveConfirm] = useState(false);
+
+  const [archive, setArchive] = useState([]);
+  const [archiveItem, setArchiveItem] = useState(null);
+
   useEffect(() => {
     if (copiedKey) {
       const t = setTimeout(() => setCopiedKey(""), 1500);
@@ -56,10 +119,17 @@ export default function Home() {
     }
   }, [copiedKey]);
 
+  useEffect(() => {
+    setArchive(loadArchive());
+  }, []);
+
   function resetAll() {
     setWizard(initialState());
     setResult(null);
     setGenError("");
+    setEditMode(false);
+    setFeedbackText("");
+    setSaveConfirm(false);
     setView("home");
   }
 
@@ -117,11 +187,9 @@ export default function Home() {
     wizard.audience &&
     wizard.subject.trim().length > 0;
 
-  async function handleGenerate() {
-    setGenError("");
-    setView("generating");
-
-    let source;
+  // Shared by the first generation and every regenerate-with-feedback call -
+  // both must send the exact same `source` for a given wizard selection.
+  function buildSourcePayload() {
     if (wizard.pathType === "news") {
       const items = allNews
         .filter((n) => wizard.selectedNewsIds.has(n.id))
@@ -133,17 +201,23 @@ export default function Home() {
             .map((n) => (n.country === "canada" ? "CA" : "EU"))
         ),
       ];
-      source = { type: "news", items, countries, contentType: "", audience: "" };
-    } else {
-      source = {
-        type: "custom",
-        items: [],
-        countries: wizard.countries,
-        contentType: wizard.contentType,
-        audience: wizard.audience,
-        subject: wizard.subject,
-      };
+      return { type: "news", items, countries, contentType: "", audience: "" };
     }
+    return {
+      type: "custom",
+      items: [],
+      countries: wizard.countries,
+      contentType: wizard.contentType,
+      audience: wizard.audience,
+      subject: wizard.subject,
+    };
+  }
+
+  async function handleGenerate() {
+    setGenError("");
+    setView("generating");
+
+    const source = buildSourcePayload();
 
     try {
       const res = await fetch("/api/generate", {
@@ -167,29 +241,74 @@ export default function Home() {
     navigator.clipboard?.writeText(text).then(() => setCopiedKey(key));
   }
 
-  function buildFullText() {
-    if (!result) return "";
-    const { format, output } = result;
-    if (format === "carousel") {
-      return (
-        output.slides.map((s) => `اسلاید ${s.num}:\n${s.content}`).join("\n\n") +
-        "\n\n--- کپشن ---\n" +
-        output.caption
-      );
+  function addToArchive(entry) {
+    setArchive((prev) => {
+      const next = [entry, ...prev];
+      saveArchive(next);
+      return next;
+    });
+  }
+
+  function deleteFromArchive(id) {
+    setArchive((prev) => {
+      const next = prev.filter((it) => it.id !== id);
+      saveArchive(next);
+      return next;
+    });
+    setArchiveItem((cur) => (cur && cur.id === id ? null : cur));
+  }
+
+  function handleApprove() {
+    if (!result) return;
+    addToArchive({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      date: new Date().toISOString(),
+      topicTitle: result.topic?.title || "",
+      format: result.format,
+      output: result.output,
+      raw: result.raw || "",
+    });
+    setSaveConfirm(true);
+    setTimeout(() => {
+      setSaveConfirm(false);
+      resetAll();
+    }, 700);
+  }
+
+  // Re-sends the same generation request plus the previous raw output and
+  // the user's feedback; app/api/generate/route.js folds those into the
+  // prompt and asks the model to revise. Loops: the result replaces
+  // `result` and the same approve/edit buttons show again.
+  async function handleRegenerate() {
+    if (!feedbackText.trim() || !result) return;
+    setGenError("");
+    setView("generating");
+
+    const source = buildSourcePayload();
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source,
+          tone: wizard.tone,
+          format: wizard.format,
+          feedback: feedbackText,
+          previousOutput: result.raw || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "بازتولید محتوا با خطا مواجه شد");
+      setResult(data);
+      setReelTab("hook");
+      setEditMode(false);
+      setFeedbackText("");
+      setView("output");
+    } catch (err) {
+      setGenError(err.message || "بازتولید محتوا با خطا مواجه شد");
+      setEditMode(false);
+      setView("output");
     }
-    if (format === "infographic") {
-      return `${output.title}\n\nآمار کلیدی:\n${output.stats.join("\n")}\n\nمقایسه:\n${output.comparison}\n\nنقشه راه:\n${output.roadmap}\n\nمنبع: ${output.source}`;
-    }
-    if (format === "reel") {
-      return `هوک:\n${output.hook}\n\nبدنه:\n${output.body}\n\nCTA:\n${output.cta}\n\nمتن‌های روی صفحه:\n${output.onscreen.join("\n")}`;
-    }
-    if (format === "article") {
-      return `${output.title}\n\n${output.content}`;
-    }
-    if (format === "telegram") {
-      return output.text;
-    }
-    return "";
   }
 
   return (
@@ -210,6 +329,11 @@ export default function Home() {
             <span className={styles.cardIcon}>✏️</span>
             <span className={styles.cardTitle}>موضوع دلخواه</span>
             <span className={styles.cardDesc}>موضوع خودت را تعریف کن</span>
+          </button>
+          <button className={styles.card} onClick={() => setView("archive")}>
+            <span className={styles.cardIcon}>📁</span>
+            <span className={styles.cardTitle}>آرشیو محتوا</span>
+            <span className={styles.cardDesc}>محتوای ذخیره‌شده را ببین، کپی یا حذف کن</span>
           </button>
         </div>
       )}
@@ -406,132 +530,65 @@ export default function Home() {
             <h2 className={styles.outputTitle}>{result.topic?.title}</h2>
           </div>
 
+          {genError && <p className={styles.errorBox}>{genError}</p>}
+
           <div className={styles.outputActions}>
-            <button className={styles.copyAllBtn} onClick={() => copy("all", buildFullText())}>
+            <button
+              className={styles.copyAllBtn}
+              onClick={() => copy("all", fullTextFor(result.format, result.output))}
+            >
               {copiedKey === "all" ? "کپی شد ✅" : "کپی همه"}
             </button>
           </div>
 
-          {result.format === "carousel" && (
-            <>
-              {result.output.slides.map((s) => (
-                <div key={s.num} className={styles.card2}>
-                  <div className={styles.cardHead}>
-                    <span className={styles.slideNum}>اسلاید {s.num}</span>
-                    <button
-                      className={styles.sectionCopyBtn}
-                      onClick={() => copy(`slide-${s.num}`, s.content)}
-                    >
-                      {copiedKey === `slide-${s.num}` ? "کپی شد ✅" : "کپی"}
-                    </button>
-                  </div>
-                  <p className={styles.cardBody}>{s.content}</p>
-                </div>
-              ))}
-              <div className={styles.card2}>
-                <div className={styles.cardHead}>
-                  <span className={styles.slideNum}>کپشن</span>
-                  <button
-                    className={styles.sectionCopyBtn}
-                    onClick={() => copy("caption", result.output.caption)}
-                  >
-                    {copiedKey === "caption" ? "کپی شد ✅" : "کپی"}
-                  </button>
-                </div>
-                <p className={styles.cardBody}>{result.output.caption}</p>
-              </div>
-            </>
+          <OutputContent
+            format={result.format}
+            output={result.output}
+            copiedKey={copiedKey}
+            onCopy={copy}
+            reelTab={reelTab}
+            setReelTab={setReelTab}
+          />
+
+          {!editMode && (
+            <div className={styles.actionStack}>
+              <button className={styles.primaryBtn} onClick={handleApprove}>
+                {saveConfirm ? "ذخیره شد ✅" : "تأیید و ذخیره"}
+              </button>
+              <button className={styles.secondaryBtn} onClick={() => setEditMode(true)}>
+                ویرایش کن
+              </button>
+            </div>
           )}
 
-          {result.format === "infographic" && (
-            <>
-              <OutputSection
-                title="آمار کلیدی"
-                text={result.output.stats.join("\n")}
-                copyKey="stats"
-                copiedKey={copiedKey}
-                onCopy={copy}
+          {editMode && (
+            <div className={styles.formSection}>
+              <div className={styles.sectionLabel}>چی رو تغییر بدیم؟</div>
+              <textarea
+                className={styles.textarea}
+                rows={4}
+                placeholder="مثلاً: لحن رسمی‌تر باشه، عدد شهریه رو دقیق‌تر کن، کپشن کوتاه‌تر بشه..."
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
               />
-              <OutputSection
-                title="جدول مقایسه"
-                text={result.output.comparison}
-                copyKey="comparison"
-                copiedKey={copiedKey}
-                onCopy={copy}
-              />
-              <OutputSection
-                title="نقشه راه"
-                text={result.output.roadmap}
-                copyKey="roadmap"
-                copiedKey={copiedKey}
-                onCopy={copy}
-              />
-              <OutputSection
-                title="منبع"
-                text={result.output.source}
-                copyKey="source"
-                copiedKey={copiedKey}
-                onCopy={copy}
-              />
-            </>
-          )}
-
-          {result.format === "reel" && (
-            <>
-              <div className={styles.tabBar}>
-                {["hook", "body", "cta"].map((t) => (
-                  <button
-                    key={t}
-                    className={`${styles.tab} ${reelTab === t ? styles.tabActive : ""}`}
-                    onClick={() => setReelTab(t)}
-                  >
-                    {t === "hook" ? "هوک" : t === "body" ? "بدنه" : "CTA"}
-                  </button>
-                ))}
-              </div>
-              <div className={styles.card2}>
-                <div className={styles.cardHead}>
-                  <button
-                    className={styles.sectionCopyBtn}
-                    onClick={() => copy(reelTab, result.output[reelTab])}
-                  >
-                    {copiedKey === reelTab ? "کپی شد ✅" : "کپی"}
-                  </button>
-                </div>
-                <p className={styles.cardBody}>{result.output[reelTab]}</p>
-              </div>
-              <OutputSection
-                title="متن‌های روی صفحه"
-                text={result.output.onscreen.join("\n")}
-                copyKey="onscreen"
-                copiedKey={copiedKey}
-                onCopy={copy}
-              />
-            </>
-          )}
-
-          {result.format === "article" && (
-            <OutputSection
-              title={result.output.title}
-              text={result.output.content}
-              copyKey="content"
-              copiedKey={copiedKey}
-              onCopy={copy}
-            />
-          )}
-
-          {result.format === "telegram" && (
-            <div className={styles.telegramPreview}>
-              <div className={styles.cardHead}>
-                <span className={styles.slideNum}>پیش‌نمایش پست</span>
+              <div className={styles.actionStack}>
                 <button
-                  className={styles.sectionCopyBtn}
-                  onClick={() => copy("text", result.output.text)}
+                  className={styles.primaryBtn}
+                  disabled={!feedbackText.trim()}
+                  onClick={handleRegenerate}
                 >
-                  {copiedKey === "text" ? "کپی شد ✅" : "کپی"}
+                  بازتولید با بازخورد
+                </button>
+                <button
+                  className={styles.secondaryBtn}
+                  onClick={() => {
+                    setEditMode(false);
+                    setFeedbackText("");
+                  }}
+                >
+                  انصراف
                 </button>
               </div>
-              <p className={styles.cardBody}>{result.output.text}</p>
             </div>
           )}
 
@@ -542,7 +599,177 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {view === "archive" && !archiveItem && (
+        <div className={styles.section}>
+          <div className={styles.topBar}>
+            <button className={styles.backBtn} onClick={() => setView("home")}>
+              → بازگشت
+            </button>
+          </div>
+          <h2 className={styles.outputTitle}>آرشیو محتوا</h2>
+          {archive.length === 0 && <p className={styles.muted}>هنوز محتوایی ذخیره نشده.</p>}
+          <div className={styles.archiveList}>
+            {archive.map((item) => (
+              <div key={item.id} className={styles.archiveRow}>
+                <button
+                  type="button"
+                  className={styles.archiveRowMain}
+                  onClick={() => setArchiveItem(item)}
+                >
+                  <span className={styles.archiveRowTitle}>{item.topicTitle || "بدون عنوان"}</span>
+                  <span className={styles.archiveRowMeta}>
+                    {formatDate(item.date)} ·{" "}
+                    {FORMATS.find((f) => f.value === item.format)?.label || item.format}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.archiveDeleteBtn}
+                  onClick={() => {
+                    if (confirm("این محتوا از آرشیو حذف بشه؟")) deleteFromArchive(item.id);
+                  }}
+                  aria-label="حذف"
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {view === "archive" && archiveItem && (
+        <div className={styles.section}>
+          <div className={styles.topBar}>
+            <button className={styles.backBtn} onClick={() => setArchiveItem(null)}>
+              → بازگشت به آرشیو
+            </button>
+          </div>
+
+          <div className={styles.outputHeader}>
+            <span className={styles.formatBadge}>
+              {FORMATS.find((f) => f.value === archiveItem.format)?.icon}{" "}
+              {FORMATS.find((f) => f.value === archiveItem.format)?.label}
+            </span>
+            <h2 className={styles.outputTitle}>{archiveItem.topicTitle || "بدون عنوان"}</h2>
+            <p className={styles.muted}>{formatDate(archiveItem.date)}</p>
+          </div>
+
+          <div className={styles.outputActions}>
+            <button
+              className={styles.copyAllBtn}
+              onClick={() => copy("all", fullTextFor(archiveItem.format, archiveItem.output))}
+            >
+              {copiedKey === "all" ? "کپی شد ✅" : "کپی همه"}
+            </button>
+          </div>
+
+          <OutputContent
+            format={archiveItem.format}
+            output={archiveItem.output}
+            copiedKey={copiedKey}
+            onCopy={copy}
+            reelTab={reelTab}
+            setReelTab={setReelTab}
+          />
+
+          <div className={styles.footerBar}>
+            <button
+              className={styles.secondaryBtn}
+              onClick={() => {
+                if (confirm("این محتوا از آرشیو حذف بشه؟")) deleteFromArchive(archiveItem.id);
+              }}
+            >
+              حذف از آرشیو
+            </button>
+          </div>
+        </div>
+      )}
     </main>
+  );
+}
+
+// Shared by the live output view and the archive detail view - renders the
+// format-specific content blocks for a given {format, output}.
+function OutputContent({ format, output, copiedKey, onCopy, reelTab, setReelTab }) {
+  return (
+    <>
+      {format === "carousel" && (
+        <>
+          {output.slides.map((s) => (
+            <div key={s.num} className={styles.card2}>
+              <div className={styles.cardHead}>
+                <span className={styles.slideNum}>اسلاید {s.num}</span>
+                <button className={styles.sectionCopyBtn} onClick={() => onCopy(`slide-${s.num}`, s.content)}>
+                  {copiedKey === `slide-${s.num}` ? "کپی شد ✅" : "کپی"}
+                </button>
+              </div>
+              <p className={styles.cardBody}>{s.content}</p>
+            </div>
+          ))}
+          <div className={styles.card2}>
+            <div className={styles.cardHead}>
+              <span className={styles.slideNum}>کپشن</span>
+              <button className={styles.sectionCopyBtn} onClick={() => onCopy("caption", output.caption)}>
+                {copiedKey === "caption" ? "کپی شد ✅" : "کپی"}
+              </button>
+            </div>
+            <p className={styles.cardBody}>{output.caption}</p>
+          </div>
+        </>
+      )}
+
+      {format === "infographic" && (
+        <>
+          <OutputSection title="آمار کلیدی" text={output.stats.join("\n")} copyKey="stats" copiedKey={copiedKey} onCopy={onCopy} />
+          <OutputSection title="جدول مقایسه" text={output.comparison} copyKey="comparison" copiedKey={copiedKey} onCopy={onCopy} />
+          <OutputSection title="نقشه راه" text={output.roadmap} copyKey="roadmap" copiedKey={copiedKey} onCopy={onCopy} />
+          <OutputSection title="منبع" text={output.source} copyKey="source" copiedKey={copiedKey} onCopy={onCopy} />
+        </>
+      )}
+
+      {format === "reel" && (
+        <>
+          <div className={styles.tabBar}>
+            {["hook", "body", "cta"].map((t) => (
+              <button
+                key={t}
+                className={`${styles.tab} ${reelTab === t ? styles.tabActive : ""}`}
+                onClick={() => setReelTab(t)}
+              >
+                {t === "hook" ? "هوک" : t === "body" ? "بدنه" : "CTA"}
+              </button>
+            ))}
+          </div>
+          <div className={styles.card2}>
+            <div className={styles.cardHead}>
+              <button className={styles.sectionCopyBtn} onClick={() => onCopy(reelTab, output[reelTab])}>
+                {copiedKey === reelTab ? "کپی شد ✅" : "کپی"}
+              </button>
+            </div>
+            <p className={styles.cardBody}>{output[reelTab]}</p>
+          </div>
+          <OutputSection title="متن‌های روی صفحه" text={output.onscreen.join("\n")} copyKey="onscreen" copiedKey={copiedKey} onCopy={onCopy} />
+        </>
+      )}
+
+      {format === "article" && (
+        <OutputSection title={output.title} text={output.content} copyKey="content" copiedKey={copiedKey} onCopy={onCopy} />
+      )}
+
+      {format === "telegram" && (
+        <div className={styles.telegramPreview}>
+          <div className={styles.cardHead}>
+            <span className={styles.slideNum}>پیش‌نمایش پست</span>
+            <button className={styles.sectionCopyBtn} onClick={() => onCopy("text", output.text)}>
+              {copiedKey === "text" ? "کپی شد ✅" : "کپی"}
+            </button>
+          </div>
+          <p className={styles.cardBody}>{output.text}</p>
+        </div>
+      )}
+    </>
   );
 }
 

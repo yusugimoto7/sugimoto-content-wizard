@@ -66,7 +66,7 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { source, tone, format } = body || {};
+  const { source, tone, format, feedback, previousOutput } = body || {};
   const spec = FORMATS[format];
   if (!spec) {
     return Response.json(
@@ -79,7 +79,15 @@ export async function POST(req) {
   }
 
   const { topic, sourceText } = buildContext(source, tone);
-  const prompt = spec.build(topic, sourceText);
+  let prompt = spec.build(topic, sourceText);
+
+  // Edit loop: re-send the full original prompt plus the previous attempt
+  // and the user's feedback, so the model revises instead of starting cold.
+  // The reminder to keep the same delimiter format is required, not
+  // decorative — the response is parsed with spec.parse() below either way.
+  if (feedback && String(feedback).trim()) {
+    prompt += `\n\nمحتوای قبلی:\n${previousOutput || ""}\n\nبازخورد کاربر: ${feedback}\n\nلطفاً براساس بازخورد بهبود بده. خروجی جدید را دقیقاً با همان دلیمیترهای فرمت بالا بده.`;
+  }
 
   let raw;
   try {
@@ -89,5 +97,5 @@ export async function POST(req) {
   }
 
   const output = spec.parse(raw);
-  return Response.json({ format, topic, output });
+  return Response.json({ format, topic, output, raw });
 }
